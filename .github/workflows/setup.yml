@@ -1,0 +1,371 @@
+name: Setup Kartun
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Ambil repository
+        uses: actions/checkout@v4
+
+      - name: Buat folder proyek
+        run: |
+          mkdir -p src public/audio scripts
+
+      - name: Buat package.json
+        run: |
+          cat > package.json <<'EOF'
+          {
+            "name": "kartun-tekotok",
+            "version": "1.0.0",
+            "private": true,
+            "type": "module",
+            "scripts": {
+              "dev": "remotion studio",
+              "audio": "node scripts/buat-suara.mjs",
+              "render": "npm run audio && remotion render KartunTekotok out/kartun.mp4"
+            },
+            "dependencies": {
+              "@remotion/cli": "4.0.0",
+              "@remotion/media": "4.0.0",
+              "react": "18.3.1",
+              "react-dom": "18.3.1",
+              "remotion": "4.0.0"
+            },
+            "devDependencies": {
+              "@types/react": "18.3.12",
+              "typescript": "5.6.3"
+            }
+          }
+          EOF
+
+      - name: Buat cerita awal
+        run: |
+          cat > src/cerita.json <<'EOF'
+          {
+            "judul": "Laptop Lemot",
+            "adegan": [
+              {
+                "karakter": "hijau",
+                "suara": "id-ID-ArdiNeural",
+                "dialog": "Mulai hari ini, aku mau jadi programmer handal!",
+                "durasi": 110
+              },
+              {
+                "karakter": "oranye",
+                "suara": "id-ID-GadisNeural",
+                "dialog": "Bagus. Terus laptopmu spesifikasinya apa?",
+                "durasi": 100
+              },
+              {
+                "karakter": "hijau",
+                "suara": "id-ID-ArdiNeural",
+                "dialog": "RAM 2 GB, penyimpanan 32 GB, dan kipasnya suaranya kayak pesawat.",
+                "durasi": 150
+              },
+              {
+                "karakter": "hijau",
+                "suara": "id-ID-ArdiNeural",
+                "dialog": "Nggak apa-apa, yang penting niat.",
+                "durasi": 90
+              },
+              {
+                "karakter": "hijau",
+                "suara": "id-ID-ArdiNeural",
+                "dialog": "Kenapa sih?",
+                "durasi": 70
+              },
+              {
+                "karakter": "oranye",
+                "suara": "id-ID-GadisNeural",
+                "dialog": "Karena laptopmu juga sedang mencoba bertahan hidup.",
+                "durasi": 120
+              },
+              {
+                "karakter": "hijau",
+                "suara": "id-ID-ArdiNeural",
+                "dialog": "Jadi aku nggak bisa belajar coding?",
+                "durasi": 90
+              },
+              {
+                "karakter": "oranye",
+                "suara": "id-ID-GadisNeural",
+                "dialog": "Bisa. Tapi sebelum belajar ngoding, kamu belajar dulu arti sabar.",
+                "durasi": 140
+              },
+              {
+                "karakter": "oranye",
+                "suara": "id-ID-GadisNeural",
+                "dialog": "Sabar itu bagian dari coding?",
+                "durasi": 90
+              },
+              {
+                "karakter": "hijau",
+                "suara": "id-ID-ArdiNeural",
+                "dialog": "Bukan. Sabar itu bagian dari punya laptop 2 GB.",
+                "durasi": 140
+              }
+            ]
+          }
+          EOF
+
+      - name: Buat pembuat suara otomatis
+        run: |
+          cat > scripts/buat-suara.mjs <<'EOF'
+          import { execSync } from "node:child_process";
+          import { readFileSync, mkdirSync } from "node:fs";
+
+          const cerita = JSON.parse(
+            readFileSync("./src/cerita.json", "utf8")
+          );
+
+          mkdirSync("./public/audio", { recursive: true });
+
+          cerita.adegan.forEach((adegan, index) => {
+            const namaFile = `public/audio/adegan-${index + 1}.mp3`;
+            const teks = adegan.dialog.replace(/"/g, '\\"');
+
+            console.log(`Membuat suara: ${namaFile}`);
+            execSync(
+              `edge-tts --voice "${adegan.suara}" --text "${teks}" --write-media "${namaFile}"`,
+              { stdio: "inherit" }
+            );
+
+            adegan.audio = `audio/adegan-${index + 1}.mp3`;
+          });
+
+          import { writeFileSync } from "node:fs";
+          writeFileSync(
+            "./src/cerita-final.json",
+            JSON.stringify(cerita, null, 2)
+          );
+          EOF
+
+      - name: Buat file Remotion
+        run: |
+          cat > src/index.ts <<'EOF'
+          import { registerRoot } from "remotion";
+          import { RemotionRoot } from "./Root";
+
+          registerRoot(RemotionRoot);
+          EOF
+
+          cat > src/Root.tsx <<'EOF'
+          import { Composition } from "remotion";
+          import { Kartun } from "./Kartun";
+          import cerita from "./cerita-final.json";
+
+          const totalFrame = cerita.adegan.reduce(
+            (total, adegan) => total + adegan.durasi,
+            0
+          );
+
+          export const RemotionRoot = () => {
+            return (
+              <Composition
+                id="KartunTekotok"
+                component={Kartun}
+                durationInFrames={totalFrame}
+                fps={30}
+                width={1920}
+                height={1080}
+              />
+            );
+          };
+          EOF
+
+          cat > src/Karakter.tsx <<'EOF'
+          import { useCurrentFrame, interpolate } from "remotion";
+
+          type Props = {
+            warna: string;
+            bicara: boolean;
+          };
+
+          export const Karakter = ({ warna, bicara }: Props) => {
+            const frame = useCurrentFrame();
+
+            const x = interpolate(frame, [0, 25], [1500, 620], {
+              extrapolateRight: "clamp",
+            });
+
+            const bukaMulut = bicara
+              ? Math.abs(Math.sin(frame * 0.45)) * 16 + 8
+              : 8;
+
+            return (
+              <div
+                style={{
+                  position: "absolute",
+                  left: x,
+                  top: 380,
+                  width: 240,
+                  height: 300,
+                  backgroundColor: warna,
+                  borderRadius: "50%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <div style={{ display: "flex", gap: 34 }}>
+                  <div
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: "50%",
+                      background: "white",
+                    }}
+                  />
+                  <div
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: "50%",
+                      background: "white",
+                    }}
+                  />
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 24,
+                    width: 54,
+                    height: bukaMulut,
+                    borderRadius: 24,
+                    background: "#3b1f1f",
+                  }}
+                />
+              </div>
+            );
+          };
+          EOF
+
+          cat > src/Kartun.tsx <<'EOF'
+          import { AbsoluteFill, Sequence, staticFile } from "remotion";
+          import { Audio } from "@remotion/media";
+          import { Karakter } from "./Karakter";
+          import cerita from "./cerita-final.json";
+
+          export const Kartun = () => {
+            let mulai = 0;
+
+            return (
+              <AbsoluteFill
+                style={{
+                  backgroundColor: "#f6ecd7",
+                  fontFamily: "sans-serif",
+                }}
+              >
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 60,
+                    width: "100%",
+                    textAlign: "center",
+                    fontSize: 70,
+                    fontWeight: 700,
+                    color: "#333",
+                  }}
+                >
+                  {cerita.judul}
+                </div>
+
+                {cerita.adegan.map((adegan, index) => {
+                  const awal = mulai;
+                  mulai += adegan.durasi;
+
+                  return (
+                    <Sequence
+                      key={index}
+                      from={awal}
+                      durationInFrames={adegan.durasi}
+                    >
+                      <Audio src={staticFile(adegan.audio)} />
+
+                      <Karakter
+                        warna={
+                          adegan.karakter === "hijau" ? "#7CB342" : "#FF7043"
+                        }
+                        bicara
+                      />
+
+                      <div
+                        style={{
+                          position: "absolute",
+                          bottom: 100,
+                          width: "100%",
+                          textAlign: "center",
+                          fontSize: 56,
+                          color: "#222",
+                          padding: "0 120px",
+                        }}
+                      >
+                        {adegan.dialog}
+                      </div>
+                    </Sequence>
+                  );
+                })}
+              </AbsoluteFill>
+            );
+          };
+          EOF
+
+      - name: Buat workflow render
+        run: |
+          cat > .github/workflows/render.yml <<'EOF'
+          name: Render Kartun
+
+          on:
+            workflow_dispatch:
+
+          permissions:
+            contents: read
+
+          jobs:
+            render:
+              runs-on: ubuntu-latest
+
+              steps:
+                - uses: actions/checkout@v4
+
+                - uses: actions/setup-node@v4
+                  with:
+                    node-version: 20
+
+                - uses: actions/setup-python@v5
+                  with:
+                    python-version: "3.11"
+
+                - name: Pasang dependensi
+                  run: |
+                    pip install edge-tts
+                    npm install
+
+                - name: Buat suara dari cerita
+                  run: npm run audio
+
+                - name: Buat video
+                  run: npx remotion render KartunTekotok out/kartun.mp4
+
+                - name: Simpan video
+                  uses: actions/upload-artifact@v4
+                  with:
+                    name: kartun-tekotok
+                    path: out/kartun.mp4
+          EOF
+
+      - name: Simpan semua file ke repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Buat template kartun dengan suara otomatis" || echo "Tidak ada perubahan"
+          git push
